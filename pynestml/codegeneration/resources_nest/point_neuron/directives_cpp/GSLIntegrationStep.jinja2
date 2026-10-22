@@ -8,7 +8,25 @@ double __t = 0;
 {%- if neuronName is defined %}
 B_.__sys.function = {{neuronName}}_dynamics{% if ast.get_args() | length > 0 %}_{{ utils.integrate_odes_args_str_from_function_call(ast) }}{% endif %};
 {%- else %}
-__sys.function = {{synapseName}}_dynamics{% if ast.get_args() | length > 0 %}_{{ utils.integrate_odes_args_str_from_function_call(ast) }}{% endif %};
+// All synapses of this type on a thread share one GSL workspace, as they are integrated one at a time; it is reset for each
+// integration, and the ODEs get this synapse's own parameters and error tolerances.
+struct __GSLWorkspace
+{
+  gsl_odeiv_step* s = gsl_odeiv_step_alloc( gsl_odeiv_step_rkf45, State_::STATE_VEC_SIZE );
+  gsl_odeiv_control* c = gsl_odeiv_control_y_new( 1e-6, 1e-6 );
+  gsl_odeiv_evolve* e = gsl_odeiv_evolve_alloc( State_::STATE_VEC_SIZE );
+  ~__GSLWorkspace()
+  {
+    gsl_odeiv_evolve_free( e );
+    gsl_odeiv_control_free( c );
+    gsl_odeiv_step_free( s );
+  }
+};
+static thread_local __GSLWorkspace __gsl;
+gsl_odeiv_step_reset( __gsl.s );
+gsl_odeiv_evolve_reset( __gsl.e );
+gsl_odeiv_control_init( __gsl.c, P_.__gsl_abs_error_tol, P_.__gsl_rel_error_tol, 1.0, 0.0 );
+gsl_odeiv_system __sys = { {{synapseName}}_dynamics{% if ast.get_args() | length > 0 %}_{{ utils.integrate_odes_args_str_from_function_call(ast) }}{% endif %}, nullptr, State_::STATE_VEC_SIZE, reinterpret_cast< void* >( &P_ ) };
 {%- endif  %}
 // numerical integration with adaptive step size control:
 // ------------------------------------------------------
@@ -46,9 +64,9 @@ while ( __t < B_.__step )
 {%-   else %}
 while ( __t < timestep  )
 {
-    const int status = gsl_odeiv_evolve_apply(__e,
-                                              __c,
-                                              __s,
+    const int status = gsl_odeiv_evolve_apply(__gsl.e,
+                                              __gsl.c,
+                                              __gsl.s,
                                               &__sys,               // system of ODE
                                               &__t,                 // from t
                                               timestep,             // to t <= step

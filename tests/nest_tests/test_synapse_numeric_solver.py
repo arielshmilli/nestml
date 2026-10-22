@@ -68,14 +68,7 @@ class TestSynapseNumericSolver:
         )
         return solution.y
 
-    def test_non_linear_synapse(self):
-        nest.ResetKernel()
-        NESTTools.set_nest_verbosity("WARNING")
-        dt = 0.1
-        nest.resolution = dt
-        sim_time = 30.
-        spike_times = [3.0, 5.0, 9.0, 11.0, 22.0, 28.0]
-
+    def build_module(self):
         files = ["models/neurons/iaf_psc_exp_neuron.nestml", "tests/nest_tests/resources/non_linear_synapse.nestml"]
         input_paths = [os.path.realpath(os.path.join(os.path.dirname(__file__), os.path.join(
             os.pardir, os.pardir, s))) for s in files]
@@ -91,7 +84,21 @@ class TestSynapseNumericSolver:
                                                                      "synapses": {"non_linear_synapse": {}}}],
                                            "weight_variable": {"non_linear_synapse": "w"},
                                            "strictly_synaptic_vars": {"non_linear_synapse": ["x", "y"]}})
-        nest.Install(modulename)
+        try:
+            nest.Install(modulename)
+        except Exception:
+            # ResetKernel() does not unload modules for NEST Simulator < v3.7; ignore exception if module is already loaded on earlier versions
+            pass
+
+    def test_non_linear_synapse(self):
+        nest.ResetKernel()
+        NESTTools.set_nest_verbosity("WARNING")
+        dt = 0.1
+        nest.resolution = dt
+        sim_time = 30.
+        spike_times = [3.0, 5.0, 9.0, 11.0, 22.0, 28.0]
+
+        self.build_module()
 
         neuron_model = "iaf_psc_exp_neuron_nestml__with_non_linear_synapse_nestml"
         synapse_model = "non_linear_synapse_nestml__with_iaf_psc_exp_neuron_nestml"
@@ -158,3 +165,38 @@ class TestSynapseNumericSolver:
 
         np.testing.assert_allclose(x, sol_arr[:, 0])
         np.testing.assert_allclose(y, sol_arr[:, 1])
+
+    def test_non_linear_synapse_own_parameters(self):
+        r"""
+        Two synapses with different parameters and the default error tolerances: each synapse has to keep its tolerances when it
+        is copied from the model's prototype, and its ODEs have to use its own parameters.
+        """
+        nest.ResetKernel()
+        NESTTools.set_nest_verbosity("WARNING")
+        nest.resolution = .1
+        sim_time = 30.
+        spike_times = [3.0, 5.0, 9.0, 11.0, 22.0, 28.0]
+        alphas = [0.1, 0.2]
+
+        self.build_module()
+
+        neuron_model = "iaf_psc_exp_neuron_nestml__with_non_linear_synapse_nestml"
+        synapse_model = "non_linear_synapse_nestml__with_iaf_psc_exp_neuron_nestml"
+
+        neuron = nest.Create(neuron_model)
+        sg = nest.Create("spike_generator", params={"spike_times": spike_times})
+        for alpha in alphas:
+            nest.Connect(sg, neuron, syn_spec={"synapse_model": synapse_model, "alpha": alpha})
+        connections = nest.GetConnections(source=sg, synapse_model=synapse_model)
+
+        np.testing.assert_array_equal(connections.get("gsl_abs_error_tol"), 1E-6)
+        np.testing.assert_array_equal(connections.get("gsl_rel_error_tol"), 1E-6)
+
+        nest.Simulate(sim_time)
+
+        # the synapses are last updated at the last spike
+        for i, alpha in enumerate(alphas):
+            params = (alpha, connections.get("beta")[i], connections.get("delta")[i], connections.get("gamma")[i])
+            expected = solve_ivp(self.lotka_volterra_system, [0, spike_times[-1]], [40., 9.], args=params, method="RK45",
+                                 rtol=1E-10, atol=1E-10).y[:, -1]
+            np.testing.assert_allclose([connections.get("x")[i], connections.get("y")[i]], expected, rtol=1E-4)

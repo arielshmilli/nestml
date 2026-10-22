@@ -2515,6 +2515,11 @@ class ASTUtils:
             for update_expr in update_exprs:
                 update_expr.accept(visitor)
 
+        if "delayed_pre_spike_updates" in metadata[model.name].keys():
+            for group in metadata[model.name]["delayed_pre_spike_updates"]:
+                for update_expr in group["updates"]:
+                    update_expr.accept(visitor)
+
         if "equations_with_delay_vars" in metadata[model.name].keys():
             for node in metadata[model.name]["equations_with_delay_vars"] + metadata[model.name]["equations_with_vector_vars"]:
                 node.accept(visitor)

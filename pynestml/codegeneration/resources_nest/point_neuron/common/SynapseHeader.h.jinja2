@@ -474,10 +474,7 @@ private:
 
 {%- if uses_numeric_solver %}
 {%-     if numeric_solver == "rk45" %}
-    gsl_odeiv_step* __s = nullptr;    //!< stepping function
-    gsl_odeiv_control* __c = nullptr; //!< adaptive stepsize control function
-    gsl_odeiv_evolve* __e = nullptr;  //!< evolution function
-    gsl_odeiv_system __sys; //!< struct describing system
+    // the GSL stepping, control and evolution functions are shared by all synapses on a thread; see GSLIntegrationStep.jinja2
 
     // __integration_step should be reset with the neuron on ResetNetwork,
     // but remain unchanged during calibration. Since it is initialized with
@@ -1328,15 +1325,7 @@ set_delay(tmp_{{ nest_codegen_opt_delay_variable }});
     throw nest::BadProperty( "The gsl_rel_error_tol must be zero or positive." );
   }
 
-  // Reinitialize the control function of the solver with new values of tolerance
-  if ( not __c )
-  {
-    __c = gsl_odeiv_control_y_new( P_.__gsl_abs_error_tol, P_.__gsl_rel_error_tol );
-  }
-  else
-  {
-    gsl_odeiv_control_init( __c, P_.__gsl_abs_error_tol, P_.__gsl_rel_error_tol, 1.0, 0.0 );
-  }
+  // the control function of the solver takes the tolerances from P_ at each integration
 {%-     endif %}
 {%- endif %}
 
@@ -1428,36 +1417,6 @@ P_.__gsl_rel_error_tol = 1e-6;
 {%- endif %}
 
 {%- if uses_numeric_solver and numeric_solver == "rk45" %}
-  if ( not __s )
-  {
-    __s = gsl_odeiv_step_alloc( gsl_odeiv_step_rkf45, State_::STATE_VEC_SIZE );
-  }
-  else
-  {
-    gsl_odeiv_step_reset( __s );
-  }
-
-  if ( not __c )
-  {
-    __c = gsl_odeiv_control_y_new( P_.__gsl_abs_error_tol, P_.__gsl_rel_error_tol );
-  }
-  else
-  {
-    gsl_odeiv_control_init( __c, P_.__gsl_abs_error_tol, P_.__gsl_rel_error_tol, 1.0, 0.0 );
-  }
-
-  if ( not __e )
-  {
-    __e = gsl_odeiv_evolve_alloc( State_::STATE_VEC_SIZE );
-  }
-  else
-  {
-    gsl_odeiv_evolve_reset( __e );
-  }
-
-  __sys.jacobian = nullptr;
-  __sys.dimension = State_::STATE_VEC_SIZE;
-  __sys.params = reinterpret_cast< void* >( &P_ );
   __step = Time::get_resolution().get_ms();
   __integration_step = Time::get_resolution().get_ms();
 {%- endif %}
@@ -1513,10 +1472,8 @@ template < typename targetidentifierT >
 
 {%- if uses_numeric_solver and numeric_solver == "rk45" %}
   // Numeric solver variables
-  __s = rhs.__s;
-  __c = rhs.__c;
-  __e = rhs.__e;
-  __sys = rhs.__sys;
+  P_.__gsl_abs_error_tol = rhs.P_.__gsl_abs_error_tol;
+  P_.__gsl_rel_error_tol = rhs.P_.__gsl_rel_error_tol;
   __step = rhs.__step;
   __integration_step = rhs.__integration_step;
 {%- endif %}

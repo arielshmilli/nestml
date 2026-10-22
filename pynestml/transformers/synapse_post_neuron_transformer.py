@@ -130,7 +130,7 @@ class SynapsePostNeuronTransformer(Transformer):
 
                 var_name = defining_node.get_variable_name() if isinstance(defining_node, ASTInlineExpression) else defining_node.get_lhs().get_name()
                 if var_name in syn_to_neuron_state_vars:
-                    context = "for variables that are moved to the postsynaptic neuron (\"" + var_name + "\" is needed by variables that change only on postsynaptic spikes; list those in the \"strictly_synaptic_vars\" code generator option to keep them in the synapse)"
+                    context = "for variables that are moved to the postsynaptic neuron (\"" + var_name + "\" would be moved; list the variables that should stay in the synapse in the \"strictly_synaptic_vars\" code generator option)"
 
             if context:
                 code, message = Messages.get_delayed_convolution_not_supported(port_var.get_name(), port_var.get_delay_parameter(), context)
