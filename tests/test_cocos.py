@@ -318,6 +318,14 @@ class TestCoCos:
         model = self._parse_and_validate_model(os.path.join(os.path.realpath(os.path.join(os.path.dirname(__file__), "valid")), "CoCoConvolveNotCorrectlyParametrized.nestml"))
         assert len(Logger.get_messages(model, LoggingLevel.ERROR)) == 0
 
+    def test_invalid_delayed_convolution(self):
+        model = self._parse_and_validate_model(os.path.join(os.path.realpath(os.path.join(os.path.dirname(__file__), "invalid")), "CoCoDelayedConvolution.nestml"))
+        assert len(Logger.get_messages(model, LoggingLevel.ERROR)) == 3
+
+    def test_valid_delayed_convolution(self):
+        model = self._parse_and_validate_model(os.path.join(os.path.realpath(os.path.join(os.path.dirname(__file__), "valid")), "CoCoDelayedConvolution.nestml"))
+        assert len(Logger.get_messages(model, LoggingLevel.ERROR)) == 0
+
     def test_invalid_invariant_correctly_typed(self):
         model = self._parse_and_validate_model(os.path.join(os.path.realpath(os.path.join(os.path.dirname(__file__), "invalid")), "CoCoInvariantNotBool.nestml"))
         assert len(Logger.get_messages(model, LoggingLevel.ERROR)) == 1

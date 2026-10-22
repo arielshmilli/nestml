@@ -33,11 +33,13 @@ from pynestml.frontend.frontend_configuration import FrontendConfiguration, Inva
     qualifier_target_platform_arg, qualifier_target_path_arg, qualifier_input_path_arg, qualifier_suffix_arg, \
     qualifier_dev_arg, qualifier_install_path_arg
 from pynestml.meta_model.ast_model import ASTModel
+from pynestml.meta_model.ast_simple_expression import ASTSimpleExpression
 from pynestml.symbols.predefined_functions import PredefinedFunctions
 from pynestml.symbols.predefined_types import PredefinedTypes
 from pynestml.symbols.predefined_units import PredefinedUnits
 from pynestml.symbols.predefined_variables import PredefinedVariables
 from pynestml.transformers.transformer import Transformer
+from pynestml.utils.ast_utils import ASTUtils
 from pynestml.utils.logger import Logger, LoggingLevel
 from pynestml.utils.messages import Messages
 from pynestml.utils.model_parser import ModelParser
@@ -562,6 +564,21 @@ def generate_code(code_generator: CodeGenerator, models: Iterable[ASTModel], met
     code_generator.generate_code(models, metadata)
 
 
+def check_delayed_convolutions_supported(model: ASTModel, target_platform: str) -> None:
+    r"""
+    Convolutions with a delayed spike input port, ``convolve(K, spikes(t - d))``, are only implemented for the NEST target. Log an error for any other target.
+    """
+    if target_platform.upper() in ["NEST", "NONE"]:
+        return
+
+    for convolve_call in ASTUtils.get_convolve_function_calls(model.get_equations_blocks()):
+        port_arg = convolve_call.get_args()[1]
+        if isinstance(port_arg, ASTSimpleExpression) and port_arg.is_variable() and port_arg.get_variable().is_delay_variable():
+            port_var = port_arg.get_variable()
+            code, message = Messages.get_delayed_convolution_not_supported(port_var.get_name(), port_var.get_delay_parameter(), "for target platform " + target_platform)
+            Logger.log_message(node=model, code=code, message=message, error_position=convolve_call.get_source_position(), log_level=LoggingLevel.ERROR)
+
+
 def process() -> bool:
     r"""
     The main toolchain workflow entry point. For all models: parse, validate, transform, generate code and build.
@@ -596,6 +613,7 @@ def process() -> bool:
     for model in models:
         if not Logger.has_errors(model):
             CoCosManager.check_cocos(model)
+            check_delayed_convolutions_supported(model, FrontendConfiguration.get_target_platform())
 
         if Logger.has_errors(model):
             code, message = Messages.get_model_contains_errors(model.get_name())

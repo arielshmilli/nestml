@@ -860,7 +860,9 @@ class ASTUtils:
 
                 func_name = node.get_name()
                 if func_name == PredefinedFunctions.CONVOLVE:
-                    symbol_buffer = node.get_scope().resolve_to_symbol(str(node.get_args()[1]), SymbolKind.VARIABLE)
+                    port_arg = node.get_args()[1]
+                    port_name = port_arg.get_variable().get_complete_name() if isinstance(port_arg, ASTSimpleExpression) and port_arg.is_variable() else str(port_arg)    # the port may be delayed, as in ``spikes(t - d)``
+                    symbol_buffer = node.get_scope().resolve_to_symbol(port_name, SymbolKind.VARIABLE)
                     input_port = ASTUtils.get_input_port_by_name(self.parent_node.get_input_blocks(), symbol_buffer.name)
                     if input_port and input_port.name not in self.excluded_port_names:
                         node_ = node
@@ -1425,6 +1427,8 @@ class ASTUtils:
             pre_spikes nS <- spike
 
         then the constructed variable will be "I_kernel__X__pre_pikes"
+
+        If the input port is delayed, as in ``convolve(I_kernel, pre_spikes(t - d))``, the name of the delay parameter is added to the name of the port: "I_kernel__X__pre_spikes__DLY_d". This keeps it apart from the undelayed convolution with the same kernel and port. The infix is chosen so that it never contains "__d", which marks the order of the derivative.
         """
         assert type(kernel_var_name) is str
         assert type(order) is int
@@ -1441,6 +1445,9 @@ class ASTUtils:
         if isinstance(spike_input_port, ASTVariable):
             if spike_input_port.has_vector_parameter():
                 spike_input_port_name += "__VEC_IDX__" + str(cls.get_numeric_vector_size(spike_input_port))
+
+            if spike_input_port.is_delay_variable():
+                spike_input_port_name += "__DLY_" + spike_input_port.get_delay_parameter()
 
         return kernel_var_name.replace("$", "__DOLLAR") + suffix + "__X__" + spike_input_port_name + diff_order_symbol * order + suffix
 
@@ -2105,6 +2112,7 @@ class ASTUtils:
                 if cls.variable_in_kernels(var_name, kernels):
                     spike_in_port_name = var_name.split("__X__")[1]
                     spike_in_port_name = spike_in_port_name.split("__d")[0]
+                    spike_in_port_name = spike_in_port_name.split("__DLY_")[0]
                     spike_in_port = ASTUtils.get_input_port_by_name(model.get_input_blocks(), spike_in_port_name)
                     type_str = "real"
                     if spike_in_port:

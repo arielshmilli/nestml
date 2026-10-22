@@ -51,7 +51,9 @@ along with NEST.  If not, see <http://www.gnu.org/licenses/>.
 #define {{synapseName.upper()}}_H
 
 // C++ includes:
+#include <algorithm>
 #include <cmath>
+#include <vector>
 
 // Includes from nestkernel:
 #include "common_synapse_properties.h"
@@ -387,6 +389,58 @@ public:
 {%- endif %}
 private:
   double t_lastspike_;
+{%- if delayed_pre_spike_updates is defined and delayed_pre_spike_updates | length > 0 %}
+
+  /**
+   * Release times of presynaptic spikes for convolutions such as convolve(K, pre_spikes(t - d)), in increasing order.
+   * A ring buffer that grows when it is full, so that no release is lost however many spikes arrive within the delay.
+  **/
+  struct DelayedSpikeQueue_
+  {
+    std::vector< double > t_;
+    size_t head_ = 0;
+    size_t size_ = 0;
+
+    bool
+    empty() const
+    {
+      return size_ == 0;
+    }
+
+    double
+    front() const
+    {
+      return t_[ head_ ];
+    }
+
+    void
+    pop()
+    {
+      head_ = ( head_ + 1 ) % t_.size();
+      --size_;
+    }
+
+    void
+    push( const double t )
+    {
+      if ( size_ == t_.size() )
+      {
+        std::vector< double > grown( std::max< size_t >( 4, 2 * t_.size() ) );
+        for ( size_t i = 0; i < size_; ++i )
+        {
+          grown[ i ] = t_[ ( head_ + i ) % t_.size() ];
+        }
+        t_.swap( grown );
+        head_ = 0;
+      }
+      t_[ ( head_ + size_ ) % t_.size() ] = t;
+      ++size_;
+    }
+  };
+{%-     for dpsu in delayed_pre_spike_updates %}
+  DelayedSpikeQueue_ delayed_spikes_{{ dpsu.name }}_;    //!< releases for {{ dpsu.port }}(t - {{ dpsu.delay_parameter }})
+{%-     endfor %}
+{%- endif %}
 {%- if vt_ports is defined and vt_ports|length > 0  %}
   // time of last update, which is either time of last presyn. spike or time-driven update
   double t_last_update_;
@@ -499,6 +553,14 @@ inline void set_{{ variable.get_name() }}(const {{ declarations.print_variable_t
   **/
   inline void
   update_internal_state_(double t_start, double timestep, const {{ synapseName }}CommonSynapseProperties& cp);
+{%- if delayed_pre_spike_updates is defined and delayed_pre_spike_updates | length > 0 %}
+
+  /**
+   * Like ``update_internal_state_()``, for an interval in which no delayed presynaptic spike is released. ``update_internal_state_()`` splits the interval at the releases and calls this function for each piece.
+  **/
+  inline void
+  integrate_internal_state_(double t_start, double timestep, const {{ synapseName }}CommonSynapseProperties& cp);
+{%- endif %}
 
   void recompute_internal_variables();
 
@@ -941,6 +1003,17 @@ void get_entry_from_continuous_variable_history(double t,
 {%  for expr in pre_spike_updates %}
     {{ printer.print(expr.get_variable()) }} += 1.;    // NEST synapse does not accept weighted spikes; the increment can only ever be 1
 {%- endfor %}
+{%- if delayed_pre_spike_updates is defined %}
+{%-     for dpsu in delayed_pre_spike_updates %}
+
+    // convolutions with {{ dpsu.port }}(t - {{ dpsu.delay_parameter }}): the spike takes effect after the delay, see update_internal_state_()
+    if ( {{ printer.print(dpsu.delay_variable) }} < 0. )
+    {
+      throw BadProperty( "{{ dpsu.delay_parameter }}, the delay of the convolution with {{ dpsu.port }}(t - {{ dpsu.delay_parameter }}), cannot be negative." );
+    }
+    delayed_spikes_{{ dpsu.name }}_.push( __t_spike + {{ printer.print(dpsu.delay_variable) }} );
+{%-     endfor %}
+{%- endif %}
 
 
     /**
@@ -1432,6 +1505,11 @@ template < typename targetidentifierT >
   t_last_update_ = rhs.t_last_update_;
 {%- endif %}
   t_lastspike_ = rhs.t_lastspike_;
+{%- if delayed_pre_spike_updates is defined %}
+{%-     for dpsu in delayed_pre_spike_updates %}
+  delayed_spikes_{{ dpsu.name }}_ = rhs.delayed_spikes_{{ dpsu.name }}_;
+{%-     endfor %}
+{%- endif %}
 
 {%- if uses_numeric_solver and numeric_solver == "rk45" %}
   // Numeric solver variables
@@ -1455,9 +1533,60 @@ template < typename targetidentifierT >
 {%- endif %}
 }
 
+{%- if delayed_pre_spike_updates is defined and delayed_pre_spike_updates | length > 0 %}
 template < typename targetidentifierT >
 inline void
 {{synapseName}}< targetidentifierT >::update_internal_state_(double t_start, double timestep, const {{synapseName}}CommonSynapseProperties& cp)
+{
+  /**
+   * The delayed presynaptic spikes (convolutions such as convolve(K, pre_spikes(t - d))) change the state at their release times.
+   * Split the interval at each release that falls into it, integrate up to the release, then apply it.
+  **/
+  const double t_end = t_start + timestep;
+  while ( true )
+  {
+    double t_release = t_end;
+    int release_queue = -1;
+{%-     for dpsu in delayed_pre_spike_updates %}
+    if ( not delayed_spikes_{{ dpsu.name }}_.empty() and delayed_spikes_{{ dpsu.name }}_.front() <= t_release )
+    {
+      t_release = delayed_spikes_{{ dpsu.name }}_.front();
+      release_queue = {{ loop.index0 }};
+    }
+{%-     endfor %}
+
+    if ( release_queue < 0 )
+    {
+      break;
+    }
+
+    integrate_internal_state_( t_start, t_release - t_start, cp );
+    t_start = t_release;
+{%-     for dpsu in delayed_pre_spike_updates %}
+
+    if ( release_queue == {{ loop.index0 }} )
+    {
+      delayed_spikes_{{ dpsu.name }}_.pop();
+{%-         for ast in dpsu.updates %}
+{%-             filter indent(6, True) %}
+{%-                 include "directives_cpp/Assignment.jinja2" %}
+{%-             endfilter %}
+{%-         endfor %}
+    }
+{%-     endfor %}
+  }
+
+  integrate_internal_state_( t_start, t_end - t_start, cp );
+}
+
+template < typename targetidentifierT >
+inline void
+{{synapseName}}< targetidentifierT >::integrate_internal_state_(double t_start, double timestep, const {{synapseName}}CommonSynapseProperties& cp)
+{%- else %}
+template < typename targetidentifierT >
+inline void
+{{synapseName}}< targetidentifierT >::update_internal_state_(double t_start, double timestep, const {{synapseName}}CommonSynapseProperties& cp)
+{%- endif %}
 {
     if (timestep < 1E-12)
     {

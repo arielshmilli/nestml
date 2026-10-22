@@ -901,6 +901,19 @@ private:
 {%- filter indent(4, True) -%}
 {{ buffer_getter.SpikeBufferGetter(true) }}
 {%- endfilter %}
+{%- if delayed_spike_inputs is defined and delayed_spike_inputs | length > 0 %}
+
+    // -----------------------------------------------------------------------
+    //   Spike inputs delayed for convolutions such as convolve(K, spikes(t - d))
+    // -----------------------------------------------------------------------
+{%-     for dsi in delayed_spike_inputs %}
+
+    // spikes of port "{{ dsi.port }}", delayed by "{{ dsi.delay_parameter }}": a ring buffer with one entry per simulation step of the delay
+    std::vector< double > delayed_spike_inputs_{{ dsi.name }}_;
+    size_t delayed_spike_inputs_{{ dsi.name }}_idx_;
+    double delayed_spike_inputs_{{ dsi.name }}_grid_sum_;    //!< delayed spike input for the current step
+{%-     endfor %}
+{%- endif %}
 
     // -----------------------------------------------------------------------
     //   Continuous-input buffers

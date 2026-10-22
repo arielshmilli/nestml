@@ -419,6 +419,7 @@ class NESTCodeGenerator(CodeGenerator):
         spike_updates = {}
         pre_spike_updates = []
         post_spike_updates = []
+        delayed_pre_spike_updates = []
         if synapse.get_equations_blocks():
             analytic_solver = metadata[synapse.name]["analytic_solver"]
             numeric_solver = metadata[synapse.name]["numeric_solver"]
@@ -430,7 +431,8 @@ class NESTCodeGenerator(CodeGenerator):
             ASTUtils.create_initial_values_for_kernels(synapse, [analytic_solver, numeric_solver], kernels)
             ASTUtils.replace_variable_names_in_expressions(synapse, [analytic_solver, numeric_solver])
             self.update_symbol_table(synapse)
-            spike_updates, _ = self.get_spike_update_expressions(synapse, metadata[synapse.name]["kernel_buffers"], [analytic_solver, numeric_solver], metadata[synapse.name]["delta_factors"], metadata)
+            spike_updates, _ = self.get_spike_update_expressions(synapse, metadata[synapse.name]["kernel_buffers"], [analytic_solver, numeric_solver], metadata[synapse.name]["delta_factors"], metadata, weighted_spikes=False)
+            delayed_pre_spike_updates = self._take_delayed_pre_spike_updates(synapse, spike_updates, metadata)
 
             if "__with_" in synapse.get_name():
                 base_neuron_name = synapse.get_name().split("__with_")[1].removesuffix(FrontendConfiguration.suffix)
@@ -450,6 +452,40 @@ class NESTCodeGenerator(CodeGenerator):
         metadata[synapse.name]["spike_updates"] = spike_updates
         metadata[synapse.name]["pre_spike_updates"] = pre_spike_updates
         metadata[synapse.name]["post_spike_updates"] = post_spike_updates
+        metadata[synapse.name]["delayed_pre_spike_updates"] = delayed_pre_spike_updates
+
+    def _take_delayed_pre_spike_updates(self, synapse: ASTModel, spike_updates: Dict[str, List[ASTAssignment]], metadata: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+        r"""
+        Remove the updates for convolutions with a delayed presynaptic port, ``convolve(K, pre_spikes(t - d))``, from ``spike_updates``, and return them grouped by port and delay.
+
+        Each group is a dict with the keys ``name`` (e.g. ``"pre_spikes__DLY_d"``), ``port``, ``delay_parameter``, ``delay_variable`` (the ASTVariable of the parameter, for printing) and ``updates`` (the assignments to apply when the delayed spike arrives).
+        """
+        groups = {}
+        for _, spike_input_port in metadata[synapse.name]["kernel_buffers"]:
+            port_var = spike_input_port.get_variable()
+            if not port_var.is_delay_variable() or not str(spike_input_port) in spike_updates.keys():
+                continue
+
+            if "__with_" in synapse.get_name():
+                base_neuron_name = synapse.get_name().split("__with_")[1].removesuffix(FrontendConfiguration.suffix)
+                base_synapse_name = synapse.get_name().split("__with_")[0].removesuffix(FrontendConfiguration.suffix)
+                for port_kind, is_port_of_kind in [("for postsynaptic ports", CodeGeneratorUtils.is_post_port), ("for neuromodulatory ports", CodeGeneratorUtils.is_vt_port)]:
+                    if is_port_of_kind(port_var.get_name(), base_neuron_name, base_synapse_name, neuron_synapse_pairs=self._options["neuron_synapse_pairs"]):
+                        code, message = Messages.get_delayed_convolution_not_supported(port_var.get_name(), port_var.get_delay_parameter(), port_kind)
+                        Logger.log_message(synapse, code, message, spike_input_port.get_source_position(), LoggingLevel.ERROR)
+                        raise Exception("Error(s) occurred during code generation")
+
+            name = port_var.get_name() + "__DLY_" + port_var.get_delay_parameter()
+            if not name in groups.keys():
+                groups[name] = {"name": name,
+                                "port": port_var.get_name(),
+                                "delay_parameter": port_var.get_delay_parameter(),
+                                "delay_variable": ASTUtils.get_parameter_variable_by_name(synapse, port_var.get_delay_parameter()),
+                                "updates": []}
+
+            groups[name]["updates"].extend(spike_updates.pop(str(spike_input_port)))
+
+        return list(groups.values())
 
     def _check_weight_variable_codegen_opt(self, synapse: ASTModel) -> None:
         synapse_name_stripped = removesuffix(removesuffix(synapse.name.split("_with_")[0], "_"), FrontendConfiguration.suffix)
@@ -669,6 +705,7 @@ class NESTCodeGenerator(CodeGenerator):
             namespace["spike_updates"] = metadata[synapse.name]["spike_updates"]
             namespace["post_spike_updates"] = metadata[synapse.name]["post_spike_updates"]
             namespace["pre_spike_updates"] = metadata[synapse.name]["pre_spike_updates"]
+            namespace["delayed_pre_spike_updates"] = metadata[synapse.name]["delayed_pre_spike_updates"]
 
         # special case for NEST delay variable (state or parameter)
         self._check_delay_variable_codegen_opt(synapse)
@@ -873,6 +910,21 @@ class NESTCodeGenerator(CodeGenerator):
             ASTUtils.assign_numeric_non_numeric_state_variables(neuron, numeric_state_variable_names, namespace["numeric_update_expressions"] if "numeric_update_expressions" in namespace.keys() else None, namespace["update_expressions"] if "update_expressions" in namespace.keys() else None, metadata)
         namespace["spike_updates"] = metadata[neuron.name]["spike_updates"]
 
+        # spike input ports that are delayed in a convolution, ``convolve(K, spikes(t - d))``; each gets a ring buffer that delays its spikes by ``d``
+        namespace["delayed_spike_inputs"] = []
+        if "kernel_buffers" in metadata[neuron.name].keys():
+            for _, spike_input_port in metadata[neuron.name]["kernel_buffers"]:
+                port_var = spike_input_port.get_variable()
+                if not port_var.is_delay_variable():
+                    continue
+
+                name = port_var.get_name() + "__DLY_" + port_var.get_delay_parameter()
+                if not name in [dsi["name"] for dsi in namespace["delayed_spike_inputs"]]:
+                    namespace["delayed_spike_inputs"].append({"name": name,
+                                                              "port": port_var.get_name(),
+                                                              "delay_parameter": port_var.get_delay_parameter(),
+                                                              "delay_variable": ASTUtils.get_parameter_variable_by_name(neuron, port_var.get_delay_parameter())})
+
         namespace["recordable_state_variables"] = []
         for state_block in neuron.get_state_blocks():
             for decl in state_block.get_declarations():
@@ -918,7 +970,7 @@ class NESTCodeGenerator(CodeGenerator):
         model.accept(symbol_table_visitor)
         SymbolTable.add_model_scope(model.get_name(), model.get_scope())
 
-    def get_spike_update_expressions(self, neuron: ASTModel, kernel_buffers, solver_dicts, delta_factors, metadata) -> Tuple[Dict[str, ASTAssignment], Dict[str, ASTAssignment]]:
+    def get_spike_update_expressions(self, neuron: ASTModel, kernel_buffers, solver_dicts, delta_factors, metadata, weighted_spikes: bool = True) -> Tuple[Dict[str, ASTAssignment], Dict[str, ASTAssignment]]:
         r"""
         Generate the equations that update the dynamical variables when incoming spikes arrive. To be invoked after
         ode-toolbox.
@@ -932,6 +984,10 @@ class NESTCodeGenerator(CodeGenerator):
         ``spike_updates`` is a mapping from input port name (as a string) to update expressions.
 
         ``post_spike_updates`` is a mapping from kernel name (as a string) to update expressions.
+
+        For a convolution with a delayed input port, ``convolve(K, spikes(t - d))``, the key is ``"spikes(t - d)"``, and the port in the update expression carries the delay parameter, so that it is printed as the delayed spike input.
+
+        If ``weighted_spikes`` is False (as in synapses), the spike weight is taken to be 1.
         """
         spike_updates = {}
         post_spike_updates = {}
@@ -940,10 +996,11 @@ class NESTCodeGenerator(CodeGenerator):
             if ASTUtils.is_delta_kernel(kernel):
                 continue
 
-            spike_input_port_name = spike_input_port.get_variable().get_name()
+            spike_input_port_var = spike_input_port.get_variable()
+            spike_input_port_name = spike_input_port_var.get_name()
             orig_port_name = spike_input_port_name.split("__for_")[0]
 
-            if not spike_input_port_name in spike_updates.keys():
+            if not str(spike_input_port) in spike_updates.keys():
                 spike_updates[str(spike_input_port)] = []
 
             is_post_port = False
@@ -976,17 +1033,24 @@ class NESTCodeGenerator(CodeGenerator):
                         continue    # skip adding the statement if we are only adding zero
 
                     assignment_str = kernel_spike_buf_name + " += "
-                    if is_post_port:
+                    if is_post_port or not weighted_spikes:
                         assignment_str += "1."
+                    elif spike_input_port_var.is_delay_variable():
+                        assignment_str += "(" + spike_input_port_name + ")"    # marked as delayed below
                     else:
                         assignment_str += "(" + str(spike_input_port) + ")"
                     if not expr in ["1.", "1.0", "1"]:
                         assignment_str += " * (" + expr + ")"
 
-                    if not buffer_type.print_nestml_type() in ["1.", "1.0", "1", "real", "integer"]:
+                    if weighted_spikes and not buffer_type.print_nestml_type() in ["1.", "1.0", "1", "real", "integer"]:
                         assignment_str += " / (1 " + buffer_type.print_nestml_type() + ")"
 
                     ast_assignment = ModelParser.parse_assignment(assignment_str)
+                    if spike_input_port_var.is_delay_variable():
+                        for var in ast_assignment.get_expression().get_variables():
+                            if var.get_name() == spike_input_port_name:
+                                var.set_delay_parameter(spike_input_port_var.get_delay_parameter())
+
                     ast_assignment.update_scope(neuron.get_scope())
                     ast_assignment.accept(ASTSymbolTableVisitor())
 

@@ -1,0 +1,75 @@
+# delayed_convolution_synapse.nestml
+# ###################################
+#
+#
+# Description
+# +++++++++++
+#
+# Test model for convolutions with a delayed presynaptic spike train in a synapse, ``convolve(K, pre_spikes(t - d))``.
+#
+# Each presynaptic spike at time :math:`t_k` adds an exponentially decaying trace from :math:`t_k + d` onwards. The synapse
+# sums the traces seen at each pre- and postsynaptic spike, and integrates them exactly over time in its ``update`` block.
+# Because the convolution variables are piecewise exponential only between delayed releases, the integral is only exact if
+# the update block is run separately for each interval between releases.
+#
+#
+# Copyright statement
+# +++++++++++++++++++
+#
+# This file is part of NEST.
+#
+# Copyright (C) 2004 The NEST Initiative
+#
+# NEST is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 2 of the License, or
+# (at your option) any later version.
+#
+# NEST is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with NEST.  If not, see <http://www.gnu.org/licenses/>.
+#
+model delayed_convolution_synapse:
+    state:
+        w real = 1
+        c_sum_at_pre real = 0     # sum of the values of c at the presynaptic spikes
+        c2_sum_at_pre real = 0
+        c_sum_at_post real = 0    # sum of the values of c at the postsynaptic spikes
+        c2_sum_at_post real = 0
+        c_integral ms = 0 ms      # integral of c over time, up to the most recent presynaptic spike
+        c2_integral ms = 0 ms
+
+    parameters:
+        tau_c ms = 48.8 ms
+        c_delay ms = 18.8 ms
+        c2_delay ms = 7.3 ms
+
+    equations:
+        kernel K = exp(-t / tau_c)
+        inline c real = convolve(K, pre_spikes(t - c_delay))
+        inline c2 real = convolve(K, pre_spikes(t - c2_delay))
+
+    input:
+        pre_spikes <- spike
+        post_spikes <- spike
+
+    output:
+        spike
+
+    onReceive(pre_spikes):
+        c_sum_at_pre += c
+        c2_sum_at_pre += c2
+        emit_spike(w)
+
+    onReceive(post_spikes):
+        c_sum_at_post += c
+        c2_sum_at_post += c2
+
+    update:
+        # c and c2 hold their values at the start of the interval; exact as long as no release falls inside it
+        c_integral += c * tau_c * (1 - exp(-timestep() / tau_c))
+        c2_integral += c2 * tau_c * (1 - exp(-timestep() / tau_c))

@@ -39,4 +39,7 @@ class NESTMLVariablePrinter(VariablePrinter):
         for i in range(1, node.differential_order + 1):
             ret += "'"
 
+        if node.is_delay_variable():
+            ret += "(t - " + node.get_delay_parameter() + ")"
+
         return ret

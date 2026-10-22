@@ -32,13 +32,17 @@ except ImportError:
 
 from pynestml.codegeneration.code_generator_utils import CodeGeneratorUtils
 from pynestml.frontend.frontend_configuration import FrontendConfiguration
+from pynestml.meta_model.ast_inline_expression import ASTInlineExpression
 from pynestml.meta_model.ast_model import ASTModel
+from pynestml.meta_model.ast_ode_equation import ASTOdeEquation
+from pynestml.meta_model.ast_simple_expression import ASTSimpleExpression
 from pynestml.symbols.predefined_variables import PredefinedVariables
 from pynestml.symbols.variable_symbol import BlockType
 from pynestml.transformers.transformer import Transformer
 from pynestml.utils.ast_utils import ASTUtils
 from pynestml.utils.logger import Logger
 from pynestml.utils.logger import LoggingLevel
+from pynestml.utils.messages import Messages
 from pynestml.utils.model_parser import ModelParser
 from pynestml.utils.string_utils import removesuffix
 from pynestml.visitors.ast_parent_visitor import ASTParentVisitor
@@ -105,6 +109,33 @@ class SynapsePostNeuronTransformer(Transformer):
             return None
 
         return None
+
+    def _check_delayed_convolutions_stay_in_synapse(self, synapse: ASTModel, post_port_names: List[str], syn_to_neuron_state_vars: List[str]) -> None:
+        r"""
+        Convolutions with a delayed port, ``convolve(K, pre_spikes(t - d))``, are only implemented in the synapse, for the presynaptic port. Raise an error if one is with a postsynaptic port, or would be moved to the neuron.
+        """
+        for convolve_call in ASTUtils.get_convolve_function_calls(synapse.get_equations_blocks()):
+            port_arg = convolve_call.get_args()[1]
+            if not (isinstance(port_arg, ASTSimpleExpression) and port_arg.is_variable() and port_arg.get_variable().is_delay_variable()):
+                continue
+
+            port_var = port_arg.get_variable()
+            context = None
+            if port_var.get_name() in post_port_names:
+                context = "for postsynaptic ports"
+            else:
+                defining_node = convolve_call
+                while not isinstance(defining_node, (ASTInlineExpression, ASTOdeEquation)):
+                    defining_node = defining_node.get_parent()
+
+                var_name = defining_node.get_variable_name() if isinstance(defining_node, ASTInlineExpression) else defining_node.get_lhs().get_name()
+                if var_name in syn_to_neuron_state_vars:
+                    context = "for variables that are moved to the postsynaptic neuron (\"" + var_name + "\" is needed by variables that change only on postsynaptic spikes; list those in the \"strictly_synaptic_vars\" code generator option to keep them in the synapse)"
+
+            if context:
+                code, message = Messages.get_delayed_convolution_not_supported(port_var.get_name(), port_var.get_delay_parameter(), context)
+                Logger.log_message(synapse, code, message, convolve_call.get_source_position(), LoggingLevel.ERROR)
+                raise Exception("Error(s) occurred during code generation")
 
     def transform_neuron_with_synapses_(self, neuron: ASTModel, synapses: List[ASTModel], metadata: Dict[str, Dict[str, Any]]) -> Tuple[ASTModel, List[ASTModel]]:
         r"""
@@ -206,6 +237,7 @@ class SynapsePostNeuronTransformer(Transformer):
                 strictly_synaptic_vars.append(self.get_option("weight_variable")[removesuffix(synapse.get_name(), FrontendConfiguration.suffix)])
 
             recursive_vars_used, syn_to_neuron_state_vars = ASTUtils.collect_variables_affected_by_ports(synapse, post_port_names, set(strictly_synaptic_vars))
+            self._check_delayed_convolutions_stay_in_synapse(synapse, post_port_names, syn_to_neuron_state_vars)
 
             metadata[new_neuron.name]["recursive_vars_used"][synapse.name] = recursive_vars_used
             metadata[new_neuron.name]["transferred_variables"][synapse.name] = [neuron_state_var + var_name_suffix for neuron_state_var in syn_to_neuron_state_vars if new_synapse.get_kernel_by_name(neuron_state_var) is None]

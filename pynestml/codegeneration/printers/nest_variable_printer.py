@@ -157,6 +157,9 @@ class NESTVariablePrinter(CppVariablePrinter):
                     var_name += "_0 + " + variable.get_vector_parameter().get_variable().get_name()
                 else:
                     var_name += "_" + str(variable.get_vector_parameter())
+            if variable.is_delay_variable():
+                # spike input delayed for a convolution, ``convolve(K, spikes(t - d))``
+                return "delayed_spike_inputs_" + variable_symbol.get_symbol_name() + "__DLY_" + variable.get_delay_parameter() + "_grid_sum_"
             return "spike_inputs_grid_sum_[" + var_name + " - MIN_SPIKE_RECEPTOR]"
 
         if self.cpp_variable_suffix:

@@ -1,0 +1,42 @@
+# delayed_convolution_relay_neuron.nestml
+# ########################################
+#
+#
+# Description
+# +++++++++++
+#
+# Postsynaptic partner for ``delayed_convolution_synapse`` in the tests. It emits a spike whenever it receives one with a weight
+# of at least 0.5, so that its spike times can be set from a spike generator; spikes of weight 0 (from the synapse under test)
+# are ignored.
+#
+#
+# Copyright statement
+# +++++++++++++++++++
+#
+# This file is part of NEST.
+#
+# Copyright (C) 2004 The NEST Initiative
+#
+# NEST is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 2 of the License, or
+# (at your option) any later version.
+#
+# NEST is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with NEST.  If not, see <http://www.gnu.org/licenses/>.
+#
+model delayed_convolution_relay_neuron:
+    input:
+        spikes <- spike
+
+    output:
+        spike
+
+    onReceive(spikes):
+        if spikes * 1 s >= 0.5:
+            emit_spike()

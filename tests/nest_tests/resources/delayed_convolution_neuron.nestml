@@ -1,0 +1,134 @@
+# delayed_convolution_neuron.nestml
+# ##################################
+#
+#
+# Description
+# +++++++++++
+#
+# Test models for convolutions with a delayed spike input port, ``convolve(K, spikes(t - d))``.
+#
+# ``delayed_convolution_neuron`` convolves the same alpha kernel once with the undelayed and once with the delayed spike train. Its
+# reference, ``delayed_convolution_reference_neuron``, has only the undelayed convolution; driving it through two connections whose
+# delays differ by ``kernel_delay`` (the second with twice the weight) should give the same membrane potential.
+#
+# The ``nonlinear`` pair does the same with an exponential kernel and a nonlinear membrane equation, so that the numeric solver is used.
+#
+#
+# Copyright statement
+# +++++++++++++++++++
+#
+# This file is part of NEST.
+#
+# Copyright (C) 2004 The NEST Initiative
+#
+# NEST is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 2 of the License, or
+# (at your option) any later version.
+#
+# NEST is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with NEST.  If not, see <http://www.gnu.org/licenses/>.
+#
+model delayed_convolution_neuron:
+    state:
+        V_m mV = 0 mV
+
+    equations:
+        kernel I_kernel = (e / tau_syn) * t * exp(-t / tau_syn)
+        recordable inline I_syn pA = unit_psc * (convolve(I_kernel, spikes) + 2 * convolve(I_kernel, spikes(t - kernel_delay)))
+        V_m' = -V_m / tau_m + I_syn / C_m
+
+    parameters:
+        C_m pF = 250 pF
+        tau_m ms = 10 ms
+        tau_syn ms = 2 ms
+        kernel_delay ms = 5 ms
+
+    internals:
+        unit_psc pA = 1 pA
+
+    input:
+        spikes <- spike
+
+    update:
+        integrate_odes()
+
+
+model delayed_convolution_reference_neuron:
+    state:
+        V_m mV = 0 mV
+
+    equations:
+        kernel I_kernel = (e / tau_syn) * t * exp(-t / tau_syn)
+        recordable inline I_syn pA = unit_psc * convolve(I_kernel, spikes)
+        V_m' = -V_m / tau_m + I_syn / C_m
+
+    parameters:
+        C_m pF = 250 pF
+        tau_m ms = 10 ms
+        tau_syn ms = 2 ms
+
+    internals:
+        unit_psc pA = 1 pA
+
+    input:
+        spikes <- spike
+
+    update:
+        integrate_odes()
+
+
+model delayed_convolution_nonlinear_neuron:
+    state:
+        V_m mV = 0 mV
+
+    equations:
+        kernel I_kernel = exp(-t / tau_syn)
+        recordable inline I_syn pA = unit_psc * (convolve(I_kernel, spikes) + 2 * convolve(I_kernel, spikes(t - kernel_delay)))
+        V_m' = -V_m / tau_m - V_m * V_m / (V_scale * tau_m) + I_syn / C_m
+
+    parameters:
+        C_m pF = 250 pF
+        tau_m ms = 10 ms
+        tau_syn ms = 2 ms
+        V_scale mV = 10 mV
+        kernel_delay ms = 5 ms
+
+    internals:
+        unit_psc pA = 1 pA
+
+    input:
+        spikes <- spike
+
+    update:
+        integrate_odes()
+
+
+model delayed_convolution_nonlinear_reference_neuron:
+    state:
+        V_m mV = 0 mV
+
+    equations:
+        kernel I_kernel = exp(-t / tau_syn)
+        recordable inline I_syn pA = unit_psc * convolve(I_kernel, spikes)
+        V_m' = -V_m / tau_m - V_m * V_m / (V_scale * tau_m) + I_syn / C_m
+
+    parameters:
+        C_m pF = 250 pF
+        tau_m ms = 10 ms
+        tau_syn ms = 2 ms
+        V_scale mV = 10 mV
+
+    internals:
+        unit_psc pA = 1 pA
+
+    input:
+        spikes <- spike
+
+    update:
+        integrate_odes()

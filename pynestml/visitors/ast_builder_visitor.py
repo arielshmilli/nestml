@@ -34,6 +34,7 @@ from pynestml.utils.ast_source_location import ASTSourceLocation
 from pynestml.utils.logger import Logger
 from pynestml.utils.port_signal_type import PortSignalType
 from pynestml.visitors.ast_data_type_visitor import ASTDataTypeVisitor
+from pynestml.visitors.ast_delayed_spike_input_port_visitor import ASTDelayedSpikeInputPortVisitor
 from pynestml.visitors.comment_collector_visitor import CommentCollectorVisitor
 
 
@@ -310,6 +311,7 @@ class ASTBuilderVisitor(PyNestMLParserVisitor):
             args.append(self.visit(ctx.expression()))
         node = ASTNodeFactory.create_ast_function_call(callee_name=name, args=args,
                                                        source_position=create_source_pos(ctx))
+        ASTDelayedSpikeInputPortVisitor.convert_delayed_port(node)
         return node
 
     # Visit a parse tree produced by PyNESTMLParser#inline.

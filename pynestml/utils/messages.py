@@ -159,6 +159,8 @@ class MessageCode(Enum):
     NOT_ALLOWED_TO_ASSIGN_TO_A_UNIT_TYPE = 130
     VARIABLE_USED_AS_A_UNIT = 131
     NO_SOLITARY_PHYSICAL_UNITS = 132
+    DELAYED_CONVOLUTION_INVALID = 133
+    DELAYED_CONVOLUTION_NOT_SUPPORTED = 134
 
 
 class Messages:
@@ -1243,3 +1245,15 @@ class Messages:
         message = "No free-standing physical units allowed (" + variable_name + ")"
 
         return MessageCode.NO_SOLITARY_PHYSICAL_UNITS, message
+
+    @classmethod
+    def get_delayed_convolution_invalid(cls, port_name: str, delay_parameter: str, reason: str) -> Tuple[MessageCode, str]:
+        message = "Convolution with delayed spike input port \"" + port_name + "(t - " + delay_parameter + ")\": " + reason
+
+        return MessageCode.DELAYED_CONVOLUTION_INVALID, message
+
+    @classmethod
+    def get_delayed_convolution_not_supported(cls, port_name: str, delay_parameter: str, context: str) -> Tuple[MessageCode, str]:
+        message = "Convolution with delayed spike input port \"" + port_name + "(t - " + delay_parameter + ")\" is not supported " + context + "."
+
+        return MessageCode.DELAYED_CONVOLUTION_NOT_SUPPORTED, message

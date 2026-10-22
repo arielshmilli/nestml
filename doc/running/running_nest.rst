@@ -1,7 +1,7 @@
 NEST Simulator target
 =====================
 
-*NESTML features supported:* :doc:`neurons </nestml_language/neurons_in_nestml>`, :doc:`synapses </nestml_language/synapses_in_nestml>`, :ref:`vectors <Vectors>`, :ref:`delay differential equations <Delay Differential Equations>`, :ref:`guards <Guards>`
+*NESTML features supported:* :doc:`neurons </nestml_language/neurons_in_nestml>`, :doc:`synapses </nestml_language/synapses_in_nestml>`, :ref:`vectors <Vectors>`, :ref:`delay differential equations <Delay Differential Equations>`, :ref:`delayed convolutions <Delayed convolutions>`, :ref:`guards <Guards>`
 
 Generates code for NEST Simulator. For a list of supported versions, see :ref:`Compatibility with different versions of NEST <nest_versions_compatibility>`.
 

@@ -49,6 +49,7 @@ along with NEST.  If not, see <http://www.gnu.org/licenses/>.
 **/
 
 // C++ includes:
+#include <algorithm>
 #include <limits>
 
 // Includes from libnestutil:
@@ -484,6 +485,15 @@ void {{ neuronName }}::init_buffers_()
   get_spike_input_received_().clear();
   get_spike_input_received_grid_sum_().clear();
 {%- endif %}
+{%- if delayed_spike_inputs is defined %}
+{%-     for dsi in delayed_spike_inputs %}
+
+  // spikes of port "{{ dsi.port }}", delayed by "{{ dsi.delay_parameter }}"; the ring buffer is sized in pre_run_hook()
+  std::fill( B_.delayed_spike_inputs_{{ dsi.name }}_.begin(), B_.delayed_spike_inputs_{{ dsi.name }}_.end(), 0. );
+  B_.delayed_spike_inputs_{{ dsi.name }}_idx_ = 0;
+  B_.delayed_spike_inputs_{{ dsi.name }}_grid_sum_ = 0.;
+{%-     endfor %}
+{%- endif %}
 {%- if has_continuous_input %}
   get_continuous_inputs_().clear();
   get_continuous_inputs_grid_sum_().clear();
@@ -605,6 +615,29 @@ void {{ neuronName }}::calibrate()
   // parameters might have changed -- recompute internals
   V_.__h = nest::Time::get_resolution().get_ms();
   recompute_internal_variables();
+{%- if delayed_spike_inputs is defined %}
+{%-     for dsi in delayed_spike_inputs %}
+
+  // size the ring buffer of the spikes of port "{{ dsi.port }}" to the delay "{{ dsi.delay_parameter }}"; it can only be resized while no spikes are in transit
+  {
+    const long delay_steps = nest::Time::delay_ms_to_steps( {{ printer.print(dsi.delay_variable) }} );
+    if ( delay_steps < 0 )
+    {
+      throw nest::BadProperty( "{{ dsi.delay_parameter }}, the delay of the convolution with {{ dsi.port }}(t - {{ dsi.delay_parameter }}), cannot be negative." );
+    }
+    std::vector< double >& buffer = B_.delayed_spike_inputs_{{ dsi.name }}_;
+    if ( buffer.size() != static_cast< size_t >( delay_steps ) )
+    {
+      if ( std::any_of( buffer.begin(), buffer.end(), []( const double x ) { return x != 0.; } ) )
+      {
+        throw nest::BadProperty( "{{ dsi.delay_parameter }}, the delay of the convolution with {{ dsi.port }}(t - {{ dsi.delay_parameter }}), cannot be changed while spikes are in transit." );
+      }
+      buffer.assign( delay_steps, 0. );
+      B_.delayed_spike_inputs_{{ dsi.name }}_idx_ = 0;
+    }
+  }
+{%-     endfor %}
+{%- endif %}
 
   // buffers B_
 {%- if ((neuron.get_spike_input_ports())|length > 0) %}
@@ -787,6 +820,26 @@ void {{ neuronName }}::update(nest::Time const & origin, const long from, const 
       get_spike_inputs_grid_sum_()[i] = get_spike_inputs_()[i].get_value(lag);
       get_spike_input_received_grid_sum_()[i] = get_spike_input_received_()[i].get_value(lag);
     }
+{%- if delayed_spike_inputs is defined and delayed_spike_inputs | length > 0 %}
+
+    /**
+     * delay spikes for convolutions such as convolve(K, spikes(t - d)): take out the spikes that arrived d earlier, put in the ones that arrive now
+    **/
+{%-     for dsi in delayed_spike_inputs %}
+
+    if ( B_.delayed_spike_inputs_{{ dsi.name }}_.empty() )
+    {
+      B_.delayed_spike_inputs_{{ dsi.name }}_grid_sum_ = B_.spike_inputs_grid_sum_[ {{ dsi.port.upper() }} - MIN_SPIKE_RECEPTOR ];
+    }
+    else
+    {
+      double& __delayed_slot = B_.delayed_spike_inputs_{{ dsi.name }}_[ B_.delayed_spike_inputs_{{ dsi.name }}_idx_ ];
+      B_.delayed_spike_inputs_{{ dsi.name }}_grid_sum_ = __delayed_slot;
+      __delayed_slot = B_.spike_inputs_grid_sum_[ {{ dsi.port.upper() }} - MIN_SPIKE_RECEPTOR ];
+      B_.delayed_spike_inputs_{{ dsi.name }}_idx_ = ( B_.delayed_spike_inputs_{{ dsi.name }}_idx_ + 1 ) % B_.delayed_spike_inputs_{{ dsi.name }}_.size();
+    }
+{%-     endfor %}
+{%- endif %}
 
 {%- if has_delay_variables %}
     /**

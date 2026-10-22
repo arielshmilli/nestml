@@ -1,0 +1,39 @@
+# CoCoDelayedConvolution.nestml
+# #############################
+#
+#
+# Description
+# +++++++++++
+#
+# This model is used to test the checks for convolutions with a delayed spike input port, ``convolve(K, spikes(t - d))``. The delay has to be a parameter with a unit of time, and delta kernels cannot be delayed.
+#
+# Negative case.
+#
+#
+model CoCoDelayedConvolution:
+    state:
+        V_m mV = 0 mV
+        d_state ms = 2 ms
+
+    equations:
+        kernel K = exp(-t / tau)
+        kernel K_delta = delta(t)
+        inline I_state_delay pA = convolve(K, spikes(t - d_state)) * unit_psc          # error: the delay is not a parameter
+        inline I_unitless_delay pA = convolve(K, spikes(t - d_unitless)) * unit_psc    # error: the delay does not have a unit of time
+        inline I_delta pA = convolve(K_delta, spikes(t - d)) * unit_psc                # error: delta kernels cannot be delayed
+        V_m' = -V_m / tau + (I_state_delay + I_unitless_delay + I_delta) / C_m
+
+    parameters:
+        tau ms = 10 ms
+        d ms = 2 ms
+        d_unitless real = 2
+        C_m pF = 250 pF
+
+    internals:
+        unit_psc pA = 1 pA
+
+    input:
+        spikes <- spike
+
+    update:
+        integrate_odes()

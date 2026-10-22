@@ -1110,6 +1110,30 @@ Physical units such as millivolts (:math:`\text{mV}`) and picoamperes (:math:`\t
 Here, the incoming spike train (``spikes_pre``) is, as before, in units of :math:`\text{s}^{-1}`, and ``unit_psc`` has been defined as an internal parameter having units :math:`\text{pA}`, so that the units match those on the left-hand side, namely, :math:`\text{pA/s}`.
 
 
+Delayed convolutions
+^^^^^^^^^^^^^^^^^^^^
+
+A convolution can also be applied to the spike train delayed by a constant time :math:`d`, by writing the input port as a function of ``t - d``:
+
+.. code-block:: nestml
+
+   parameters:
+       tau ms = 48.8 ms
+       d ms = 18.8 ms
+
+   equations:
+       kernel K = exp(-t / tau)
+       inline c real = convolve(K, spikes_pre(t - d))
+
+Each spike then starts to affect ``c`` at a time :math:`d` after it arrives. This is the same as a convolution with the shifted kernel :math:`K(t - d)`, which cannot be written as a kernel directly, because a shifted kernel is not the solution of a linear differential equation.
+
+- The delay has to be a parameter with a unit of time. Its name cannot start with an underscore or contain a double underscore.
+- Delta kernels cannot be delayed; add the delay to the connection instead.
+- Delayed convolutions are only supported for the NEST target.
+- In a neuron, the spikes are held in a buffer with one entry per simulation step, so the delay is rounded to a multiple of the simulation resolution, like connection delays in NEST. The delay can be changed between calls to ``Simulate()``, but only while no spikes are in transit. If all convolutions with a port have the same delay, adding it to the delay of the connections gives the same result.
+- In a synapse, only the presynaptic port can be delayed. The spikes take effect at the exact times :math:`t_\text{spike} + d`, also when these fall between grid points. The synapse state is advanced from one such time to the next, so the ``update`` block is run once for each interval between them (and ``timestep()`` is the length of that interval). As for all synapse state in NEST, the state is only brought up to date when the next presynaptic spike is processed. Variables that change only on postsynaptic spikes are normally moved to the postsynaptic neuron, together with the convolutions they read; if they read a delayed convolution, list them in the ``strictly_synaptic_vars`` code generator option, to keep them in the synapse.
+
+
 Handling spiking input by event handlers
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
